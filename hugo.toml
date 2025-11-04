@@ -1,0 +1,4 @@
+baseURL = 'https://network-automation-labs.github.io/'
+languageCode = 'en-us'
+title = 'Network Automation Labs'
+theme = 'whiteplain'
