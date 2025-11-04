@@ -18,31 +18,32 @@ main() {
   DEB_POOL="public/deb/pool/${COMPONENTS:-main}"
   DEB_DISTS="dists/${SUITE:-stable}"
   DEB_DISTS_COMPONENTS="${DEB_DISTS}/${COMPONENTS:-main}/binary-all"
-  GPG_TTY=""
+  GPG_TTY="$(tty)"
   export GPG_TTY
   echo "Parsing the repo list"
   while IFS= read -r repo ; do
     if release=$(curl -fqs https://api.github.com/repos/${repo}/releases/latest) ; then
       tag="$(echo "$release" | jq -r '.tag_name')"
-      deb_file="$(echo "$release" | jq -r '.assets[] | select(.name | endswith(".deb")) | .name')"
+      deb_files="$(echo "$release" | jq -r '.assets[] | select(.name | endswith(".deb")) | .name')"
       echo "Parsing repo $repo at $tag"
-      if [ -n "$deb_file" ] ; then
+      if [ -n "$deb_files" ] ; then
         GOT_DEB=1
         mkdir -p "$DEB_POOL"
         pushd "$DEB_POOL" >/dev/null
-        echo "Getting DEB"
-        wget -q "https://github.com/${repo}/releases/download/${tag}/${deb_file}"
+        for deb_file in $deb_files ; do
+          echo "Getting DEB ${deb_file}"
+          wget -q "https://github.com/${repo}/releases/download/${tag}/${deb_file}"
+        done
         popd >/dev/null
       fi
     fi
   done < .github/config/package_list.txt
 
-  if [ $GOT_DEB -eq 1 ]
-  then
+  if [ $GOT_DEB -eq 1 ] ; then
     pushd public/deb >/dev/null
     mkdir -p "${DEB_DISTS_COMPONENTS}"
     echo "Scanning all downloaded DEB Packages and creating Packages file."
-    dpkg-scanpackages --arch all pool/ > "${DEB_DISTS_COMPONENTS}/Packages"
+    dpkg-scanpackages --multiversion pool/ > "${DEB_DISTS_COMPONENTS}/Packages"
     gzip -9 > "${DEB_DISTS_COMPONENTS}/Packages.gz" < "${DEB_DISTS_COMPONENTS}/Packages"
     bzip2 -9 > "${DEB_DISTS_COMPONENTS}/Packages.bz2" < "${DEB_DISTS_COMPONENTS}/Packages"
     popd >/dev/null
