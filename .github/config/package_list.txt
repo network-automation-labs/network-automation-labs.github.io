@@ -1,1 +1,2 @@
 network-automation-labs/rootless-netman
+network-automation-labs/traefik-watch
