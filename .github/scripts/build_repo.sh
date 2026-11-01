@@ -17,7 +17,7 @@ main() {
   GOT_DEB=0
   DEB_POOL="public/deb/pool/${COMPONENTS:-main}"
   DEB_DISTS="dists/${SUITE:-stable}"
-  DEB_DISTS_COMPONENTS="${DEB_DISTS}/${COMPONENTS:-main}/binary-all"
+  DEB_DISTS_COMPONENT="${DEB_DISTS}/${COMPONENTS:-main}"
   GPG_TTY="$(tty)"
   export GPG_TTY
   echo "Parsing the repo list"
@@ -41,11 +41,45 @@ main() {
 
   if [ $GOT_DEB -eq 1 ] ; then
     pushd public/deb >/dev/null
-    mkdir -p "${DEB_DISTS_COMPONENTS}"
-    echo "Scanning all downloaded DEB Packages and creating Packages file."
-    dpkg-scanpackages --multiversion pool/ > "${DEB_DISTS_COMPONENTS}/Packages"
-    gzip -9 > "${DEB_DISTS_COMPONENTS}/Packages.gz" < "${DEB_DISTS_COMPONENTS}/Packages"
-    bzip2 -9 > "${DEB_DISTS_COMPONENTS}/Packages.bz2" < "${DEB_DISTS_COMPONENTS}/Packages"
+
+    echo "Scanning all downloaded DEB Packages"
+    ALL_PACKAGES="$(mktemp)"
+    dpkg-scanpackages --multiversion pool/ > "$ALL_PACKAGES"
+
+    # Note: packages are split by their actual control-file "Architecture:"
+    # field below, not via dpkg-scanpackages -a, which matches on filename
+    # convention (name_version_arch.deb) and misses files like
+    # "..._linux_386.deb" whose control file correctly says Architecture: i386.
+    echo "Determining package architectures"
+    ARCHES="$(awk '/^Architecture:/ {print $2}' "$ALL_PACKAGES" | sort -u | grep -v '^all$' \
+      | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+
+    if [ -z "$ARCHES" ] ; then
+      echo "No architecture-specific packages found; publishing as binary-all"
+      ARCHES="all"
+    fi
+
+    for arch in $ARCHES ; do
+      ARCH_DIR="${DEB_DISTS_COMPONENT}/binary-${arch}"
+      echo "Building Packages file for architecture ${arch}"
+      mkdir -p "$ARCH_DIR"
+      if [ "$arch" = "all" ] ; then
+        cp "$ALL_PACKAGES" "${ARCH_DIR}/Packages"
+      else
+        awk -v target="$arch" '
+          BEGIN { RS=""; FS="\n"; want="Architecture: " target; wantall="Architecture: all" }
+          {
+            keep=0
+            for (i=1; i<=NF; i++) { if ($i==want || $i==wantall) keep=1 }
+            if (keep) print $0 "\n"
+          }
+        ' "$ALL_PACKAGES" > "${ARCH_DIR}/Packages"
+      fi
+      gzip -9 > "${ARCH_DIR}/Packages.gz" < "${ARCH_DIR}/Packages"
+      bzip2 -9 > "${ARCH_DIR}/Packages.bz2" < "${ARCH_DIR}/Packages"
+    done
+    rm -f "$ALL_PACKAGES"
+
     popd >/dev/null
     pushd "public/deb/${DEB_DISTS}" >/dev/null
     echo "Making Release file"
@@ -55,7 +89,7 @@ main() {
       echo "Suite: ${SUITE:-stable}"
       echo "Codename: ${SUITE:-stable}"
       echo "Version: 1.0"
-      echo "Architectures: all"
+      echo "Architectures: ${ARCHES}"
       echo "Components: ${COMPONENTS:-main}"
       echo "Description: ${DESCRIPTION:-A repository for packages released by ${REPO_OWNER}}"
       echo "Date: $(date -Ru)"
